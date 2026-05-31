@@ -327,3 +327,9 @@ with open("highscore.txt", "w") as file:
     file.write(str(high_score))
 
 pygame.quit()
+
+
+
+
+
+# *** WORK ON POWERUPS ON MONDAY: Rocket Defense***
