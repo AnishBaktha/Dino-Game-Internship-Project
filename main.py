@@ -75,6 +75,7 @@ target_tilt = 0
 ground_w = ground_sprite.get_width()
 ground_x1 = 0
 ground_x2 = ground_w
+groundspeed = 0.6  # change this to make the ground scroll faster or slower
 
 # enemy variables
 enemy_list = []
@@ -279,8 +280,8 @@ while running:
         enemy_speed = 5 + score // 50
 
         # move both ground pieces left, loop them back when off screen
-        ground_x1 -= enemy_speed
-        ground_x2 -= enemy_speed
+        ground_x1 -= enemy_speed * groundspeed
+        ground_x2 -= enemy_speed * groundspeed
         if ground_x1 <= -ground_w:
             ground_x1 = ground_w
         if ground_x2 <= -ground_w:
