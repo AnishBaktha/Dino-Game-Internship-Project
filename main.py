@@ -3,7 +3,7 @@
 The better Chrome Dino Game because jets, built using pygame-ce.
 Original intern: @bassemfarid
 Additional author: Anish Baktharaman
-Commit hash: e6aa45d
+Commit hash: 31441c7
 """
 
 import pygame
