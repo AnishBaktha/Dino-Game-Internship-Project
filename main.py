@@ -10,13 +10,21 @@ import pygame
 import random
 
 pygame.init()
+pygame.mixer.init()
+
 screen = pygame.display.set_mode((800, 400))
 pygame.display.set_caption("Dino Game")
 clock = pygame.time.Clock()
 running = True
 
+# sounds
+game_over = pygame.mixer.Sound("sfx/Game_Over.wav")
+missile = pygame.mixer.Sound("sfx/Missile_launch.wav")
+player_hit = pygame.mixer.Sound("sfx/Player_Hit.wav")
+
 # game state
 is_playing = False
+is_paused = False  # Track pause state
 ground_y = 300
 jump_speed = -10
 
@@ -75,7 +83,7 @@ target_tilt = 0
 ground_w = ground_sprite.get_width()
 ground_x1 = 0
 ground_x2 = ground_w
-groundspeed = 0.6  # change this to make the ground scroll faster or slower
+groundspeed = 0.6  
 
 # enemy variables
 enemy_list = []
@@ -85,6 +93,8 @@ enemy_speed = 5
 score = 0
 high_score = 0
 start_time = 0
+paused_duration = 0  
+pause_start_time = 0  
 
 # timer events
 enemy_timer = pygame.USEREVENT + 1
@@ -107,7 +117,11 @@ except FileNotFoundError:
 # functions
 
 def display_score():
-    current_time = pygame.time.get_ticks() // 100 - start_time
+    if is_paused:
+        current_time = pause_start_time - start_time - paused_duration
+    else:
+        current_time = (pygame.time.get_ticks() // 100) - start_time - paused_duration
+        
     score_surf = game_font.render(f"Score: {current_time}", False, "#b0a3ae")
     score_rect = score_surf.get_rect(center=(400, 50))
     screen.blit(score_surf, score_rect)
@@ -162,29 +176,30 @@ def update_tilt():
     if player_rect.bottom >= player_mountains:
         target_tilt = 0
     elif players_gravity_speed < 0:
-        target_tilt = 30   # going up, nose up
+        target_tilt = 30   
     else:
-        target_tilt = -30  # falling, nose down
+        target_tilt = -30  
 
-    # step toward the target angle a little each frame
     if tilt_angle < target_tilt:
         tilt_angle += 3
     elif tilt_angle > target_tilt:
         tilt_angle -= 3
 
 
-def get_rotated_player():
+def player_rotate():
     rotated = pygame.transform.rotate(player_surf, tilt_angle)
     rotated_rect = rotated.get_rect(midbottom=player_rect.midbottom)
     return rotated, rotated_rect
 
 
-def move_enemies(enemies):
+def move_enemies(enemies, move=True):
     if enemies:
         for enemy in enemies:
-            enemy.x -= enemy_speed
+            if move:  
+                enemy.x -= enemy_speed
             screen.blit(missile_surf, enemy)
-        enemies = [enemy for enemy in enemies if enemy.right > 0]
+        if move:
+            enemies = [enemy for enemy in enemies if enemy.right > 0]
     return enemies
 
 
@@ -193,13 +208,16 @@ def collisions(rotated_rect, enemies):
     if invincibility_timer > 0:
         return True, enemies
 
-    # shrink the box a bit so the corners of the rotated image don't count as hits
     hitbox = rotated_rect.inflate(-20, -20)
 
     for enemy_rect in enemies:
         if hitbox.colliderect(enemy_rect):
             enemies.remove(enemy_rect)
             player_lives -= 1
+            
+            # Play player hit sound on impact
+            player_hit.play()
+            
             if player_lives <= 0:
                 return False, enemies
             invincibility_timer = immortality_length
@@ -236,26 +254,36 @@ while running:
             running = False
 
         if is_playing:
-            player_input(event)
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_p:
+                is_paused = not is_paused
+                if is_paused:
+                    pause_start_time = pygame.time.get_ticks() // 100
+                else:
+                    paused_duration += (pygame.time.get_ticks() // 100) - pause_start_time
 
-            if event.type == enemy_timer:
-                enemy_list.append(
-                    missile_surf.get_rect(
-                        bottomleft=(random.randint(850, 1100), missile_mountains)
+            if not is_paused:
+                player_input(event)
+
+                if event.type == enemy_timer:
+                    enemy_list.append(
+                        missile_surf.get_rect(
+                            bottomleft=(random.randint(850, 1100), missile_mountains)
+                        )
                     )
-                )
+                    # Play missile launch sound when a missile appears on the right side
+                    missile.play()
 
-            if event.type == animation_timer:
-                animate_player()
+                if event.type == animation_timer:
+                    animate_player()
 
-            if event.type == missile_animation_timer:
-                animate_missile()
+                if event.type == missile_animation_timer:
+                    animate_missile()
 
         else:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                 is_playing = True
+                is_paused = False
 
-                # reset everything for a new game
                 enemy_list.clear()
                 player_rect.bottomleft = (80, player_mountains)
                 players_gravity_speed = 0
@@ -268,40 +296,36 @@ while running:
                 invincibility_timer = 0
                 player_visible = True
                 flash_counter = 0
+                paused_duration = 0
 
                 start_time = pygame.time.get_ticks() // 100
 
     if is_playing:
         screen.blit(sky_sprite, (0, 0))
-
         score = display_score()
-
-        # speed increases gradually as score goes up
         enemy_speed = 5 + score // 50
 
-        # move both ground pieces left, loop them back when off screen
-        ground_x1 -= enemy_speed * groundspeed
-        ground_x2 -= enemy_speed * groundspeed
-        if ground_x1 <= -ground_w:
-            ground_x1 = ground_w
-        if ground_x2 <= -ground_w:
-            ground_x2 = ground_w
+        if not is_paused:
+            ground_x1 -= enemy_speed * groundspeed
+            ground_x2 -= enemy_speed * groundspeed
+            if ground_x1 <= -ground_w: ground_x1 = ground_w
+            if ground_x2 <= -ground_w: ground_x2 = ground_w
+            
+            apply_gravity()
+            update_tilt()
+
         screen.blit(ground_sprite, (ground_x1, ground_y))
         screen.blit(ground_sprite, (ground_x2, ground_y))
 
-        apply_gravity()
-        update_tilt()
-
-        rotated, rotated_rect = get_rotated_player()
-
-        # flash the player while invincible
-        if invincibility_timer > 0:
+        rotated, rotated_rect = player_rotate()
+        
+        if not is_paused and invincibility_timer > 0:
             invincibility_timer -= 1
             flash_counter += 1
             if flash_counter >= 6:
                 player_visible = not player_visible
                 flash_counter = 0
-        else:
+        elif not is_paused:
             player_visible = True
 
         if player_visible:
@@ -309,20 +333,26 @@ while running:
 
         draw_lives()
 
-        enemy_list = move_enemies(enemy_list)
+        enemy_list = move_enemies(enemy_list, move=not is_paused)
 
-        is_playing, enemy_list = collisions(rotated_rect, enemy_list)
-
-        if score > high_score:
-            high_score = score
+        if not is_paused:
+            is_playing, enemy_list = collisions(rotated_rect, enemy_list)
+            if score > high_score:
+                high_score = score
+        else:
+            pause_surf = game_font.render("GAME PAUSED", False, "#314e71")
+            pause_rect = pause_surf.get_rect(center=(400, 160))
+            resume_surf = game_font.render("Press 'P' to Resume", False, "#314e71")
+            resume_rect = resume_surf.get_rect(center=(400, 220))
+            screen.blit(pause_surf, pause_rect)
+            screen.blit(resume_surf, resume_rect)
 
     else:
         draw_menu()
-
+        
     pygame.display.update()
     clock.tick(60)
 
-# high score save on close
 with open("highscore.txt", "w") as file:
     file.write(str(high_score))
 
@@ -330,7 +360,4 @@ pygame.quit()
 
 
 
-
-
-# *** WORK ON POWERUPS ON MONDAY: Rocket Defense***
-# add pause menu
+# add powerups (player can shoot missiles for a limited time)
