@@ -1,363 +1,413 @@
-"""Dino Game in Python
-
-The better Chrome Dino Game because jets, built using pygame-ce.
+"""
+Dino Game in Python
+The better Chrome Dino Game trust.
 Original intern: @bassemfarid
 Additional author: Anish Baktharaman
-Commit hash: 31441c7
+Commit hash: idk
 """
-
+ 
 import pygame
 import random
-
+import gif_pygame
+ 
 pygame.init()
 pygame.mixer.init()
-
+ 
 screen = pygame.display.set_mode((800, 400))
 pygame.display.set_caption("Dino Game")
 clock = pygame.time.Clock()
 running = True
-
+ 
 # sounds
 game_over = pygame.mixer.Sound("sfx/Game_Over.wav")
-missile = pygame.mixer.Sound("sfx/Missile_launch.wav")
 player_hit = pygame.mixer.Sound("sfx/Player_Hit.wav")
-
+ 
 # game state
 is_playing = False
-is_paused = False  # Track pause state
+is_paused = False
 ground_y = 300
-jump_speed = -10
-
-player_hover = 45
-player_mountains = ground_y - player_hover
-
-missile_hover = 50
-missile_mountains = ground_y - missile_hover
-
+jump_speed = -20
+ 
+monkey_vertical = -15
+player_ground = ground_y - monkey_vertical
+ 
 # level images
-sky_sprite = pygame.image.load("graphics/level/sky.png").convert()
-ground_sprite = pygame.image.load("graphics/level/ground.png").convert()
-
+bg_sprite = pygame.transform.scale(pygame.image.load("graphics/level/Background.png").convert(), (800, 400))
+fg_sprite = pygame.image.load("graphics/level/Foreground.png").convert_alpha()
+fg_y = 400 - fg_sprite.get_height()
+ground_sprite = pygame.image.load("graphics/level/ground.png").convert_alpha()
+overlay_image = pygame.image.load("graphics/level/Overlay.png").convert_alpha()
 game_font = pygame.font.SysFont("couriernew", 40, bold=True)
-
-# player images
-player_walk_1 = pygame.image.load("graphics/player/player_walk_1.png").convert_alpha()
-player_walk_2 = pygame.image.load("graphics/player/player_walk_2.png").convert_alpha()
-player_jump = pygame.image.load("graphics/player/player_jump.png").convert_alpha()
-
-player_walk = [player_walk_1, player_walk_2]
-player_index = 0
-player_surf = player_walk[player_index]
-player_rect = player_surf.get_rect(bottomleft=(80, player_mountains))
-
-# missile images
-missile_frame_1 = pygame.image.load("graphics/missile/missile_1.png").convert_alpha()
-missile_frame_2 = pygame.image.load("graphics/missile/missile_2.png").convert_alpha()
-missile_frames = [missile_frame_1, missile_frame_2]
-missile_frame_index = 0
-missile_surf = missile_frames[missile_frame_index]
-
+ 
+# monkey images
+monkey_run_gif = gif_pygame.load("graphics/monkey/Monkey_run.gif")
+gif_pygame.transform.scale(monkey_run_gif, (100, 100))
+monkey_jump_image = pygame.image.load("graphics/monkey/Monkey_jump.png").convert_alpha()
+monkey_jump_image = pygame.transform.scale(monkey_jump_image, (100, 100))
+monkey_image = monkey_run_gif.get_surfaces()[0]
+monkey_hitbox = monkey_image.get_rect(bottomleft=(10, player_ground))
+ 
+# rock obstacle images
+rock_images = [
+    pygame.image.load("graphics/obstacles/Rock_1.png").convert_alpha(),
+    pygame.image.load("graphics/obstacles/Rock_2.png").convert_alpha(),
+    pygame.image.load("graphics/obstacles/Rock_3.png").convert_alpha(),
+]
+ 
 # lives images
-lives_surfs = {
-    3: pygame.image.load("graphics/lives/3_lives.png").convert_alpha(),
-    2: pygame.image.load("graphics/lives/2_lives.png").convert_alpha(),
-    1: pygame.image.load("graphics/lives/1_life.png").convert_alpha(),
-}
-
-# player variables
-players_gravity_speed = 0
+lives_surfs = [
+    pygame.image.load("graphics/lives/3_lives.png").convert_alpha(),
+    pygame.image.load("graphics/lives/2_lives.png").convert_alpha(),
+    pygame.image.load("graphics/lives/1_life.png").convert_alpha(),
+]
+ 
+# Variables
 jump_count = 0
 player_lives = 3
-
-# invincibility after getting hit
 immortality_length = 90
 invincibility_timer = 0
 player_visible = True
-flash_counter = 0
-
-# tilt variables
-tilt_angle = 0
-target_tilt = 0
-
-# ground scrolling - two copies of the ground tile
+monkey_flashing = 0
+ 
+# Ground scrolling
 ground_w = ground_sprite.get_width()
 ground_x1 = 0
 ground_x2 = ground_w
-groundspeed = 0.6  
-
-# enemy variables
-enemy_list = []
+groundspeed = 0.6
+ 
+# Back ground layer parallaxing
+back_ground_x1 = 0
+back_ground_x2 = ground_w
+back_groundspeed = 0.4
+ 
+# Parallax layer scrolling
+bg_w = 800
+fg_w = fg_sprite.get_width()
+bg_scroll_speed = 0.05
+fg_scroll_speed = 0.35
+bg_x1 = 0
+bg_x2 = bg_w
+fg_x1 = 0
+fg_x2 = fg_w
+ 
+# track rock position
+enemy_rects = []
+enemy_surfs = []
+enemy_xpos = []
+ 
 enemy_speed = 5
-
-# score variables
 score = 0
 high_score = 0
 start_time = 0
-paused_duration = 0  
-pause_start_time = 0  
-
-# timer events
+pause_time = 0
+pause_start_time = 0
+ 
+# timer related functions
 enemy_timer = pygame.USEREVENT + 1
 pygame.time.set_timer(enemy_timer, 1200)
-
-animation_timer = pygame.USEREVENT + 2
-pygame.time.set_timer(animation_timer, 150)
-
-missile_animation_timer = pygame.USEREVENT + 3
-pygame.time.set_timer(missile_animation_timer, 300)
-
+ 
 # load high score from file
 try:
     with open("highscore.txt", "r") as file:
         high_score = int(file.read())
 except FileNotFoundError:
     high_score = 0
-
-
+ 
+ 
 # functions
-
+ 
+def scroll_pair(x1, x2, speed, sprite_w):
+    x1 -= speed
+    x2 -= speed
+    old_x1, old_x2 = x1, x2
+    if old_x1 <= -sprite_w:
+        x1 = old_x2 + sprite_w
+    if old_x2 <= -sprite_w:
+        x2 = old_x1 + sprite_w
+    return x1, x2
+ 
+ 
 def display_score():
     if is_paused:
-        current_time = pause_start_time - start_time - paused_duration
+        current_time = pause_start_time - start_time - pause_time
     else:
-        current_time = (pygame.time.get_ticks() // 100) - start_time - paused_duration
-        
-    score_surf = game_font.render(f"Score: {current_time}", False, "#b0a3ae")
-    score_rect = score_surf.get_rect(center=(400, 50))
-    screen.blit(score_surf, score_rect)
+        current_time = (pygame.time.get_ticks() // 100) - start_time - pause_time
+ 
+    score_surf = game_font.render(f"Score: {current_time}", False, "#ebc034")
+    score_position = score_surf.get_rect(center=(400, 50))
+    screen.blit(score_surf, score_position)
     return current_time
-
-
+ 
+ 
 def draw_lives():
-    if player_lives in lives_surfs:
-        screen.blit(lives_surfs[player_lives], (20, 30))
-
-
+    if player_lives >= 1:
+        screen.blit(lives_surfs[3 - player_lives], (20, 30))
+ 
+ 
 def animate_player():
-    global player_index, player_surf
-    if player_rect.bottom < player_mountains:
-        player_surf = player_jump
+    global monkey_image
+    if monkey_hitbox.bottom < player_ground:
+        monkey_image = monkey_jump_image
     else:
-        player_index += 0.1
-        if player_index >= len(player_walk):
-            player_index = 0
-        player_surf = player_walk[int(player_index)]
-
-
-def animate_missile():
-    global missile_frame_index, missile_surf
-    missile_frame_index = 1 - missile_frame_index
-    missile_surf = missile_frames[missile_frame_index]
-
-
+        frames = monkey_run_gif.get_surfaces()
+        frame_index = (pygame.time.get_ticks() // 150) % len(frames)
+        monkey_image = frames[frame_index]
+ 
+ 
 def player_input(event):
-    global players_gravity_speed, jump_count
-    if (
-        event.type == pygame.KEYDOWN
-        and event.key == pygame.K_SPACE
-        and jump_count < 2
-    ):
-        players_gravity_speed = jump_speed
+    global player_gravspeed, jump_count
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and jump_count < 2:
+        player_gravspeed = jump_speed
         jump_count += 1
-
-
-def apply_gravity():
-    global players_gravity_speed, jump_count
-    players_gravity_speed += 0.25
-    player_rect.y += players_gravity_speed
-    if player_rect.bottom >= player_mountains:
-        player_rect.bottom = player_mountains
-        players_gravity_speed = 0
+ 
+ 
+def gravity():
+    global player_gravspeed, jump_count
+    player_gravspeed += 1
+    monkey_hitbox.y += player_gravspeed
+    if monkey_hitbox.bottom >= player_ground:
+        monkey_hitbox.bottom = player_ground
+        player_gravspeed = 0
         jump_count = 0
-
-
-def update_tilt():
-    global tilt_angle, target_tilt
-    if player_rect.bottom >= player_mountains:
-        target_tilt = 0
-    elif players_gravity_speed < 0:
-        target_tilt = 30   
-    else:
-        target_tilt = -30  
-
-    if tilt_angle < target_tilt:
-        tilt_angle += 3
-    elif tilt_angle > target_tilt:
-        tilt_angle -= 3
-
-
-def player_rotate():
-    rotated = pygame.transform.rotate(player_surf, tilt_angle)
-    rotated_rect = rotated.get_rect(midbottom=player_rect.midbottom)
-    return rotated, rotated_rect
-
-
-def move_enemies(enemies, move=True):
-    if enemies:
-        for enemy in enemies:
-            if move:  
-                enemy.x -= enemy_speed
-            screen.blit(missile_surf, enemy)
-        if move:
-            enemies = [enemy for enemy in enemies if enemy.right > 0]
-    return enemies
-
-
-def collisions(rotated_rect, enemies):
-    global player_lives, invincibility_timer, player_visible, flash_counter
+ 
+ 
+def move_enemies(rects, surfs, xpos, speed_modifier, should_move):
+    updated_rects = []
+    updated_surfs = []
+    updated_xpos = []
+ 
+    for i in range(len(rects)):
+        if should_move:
+            xpos[i] -= speed_modifier * groundspeed
+            rects[i].x = int(xpos[i])
+ 
+        screen.blit(surfs[i], rects[i])
+ 
+        if rects[i].right > 0:
+            updated_rects.append(rects[i])
+            updated_surfs.append(surfs[i])
+            updated_xpos.append(xpos[i])
+ 
+    return updated_rects, updated_surfs, updated_xpos
+ 
+ 
+def collisions(monkey_hitbox, rects, surfs, xpos):
+    global player_lives, invincibility_timer, player_visible, monkey_flashing
     if invincibility_timer > 0:
-        return True, enemies
-
-    hitbox = rotated_rect.inflate(-20, -20)
-
-    for enemy_rect in enemies:
-        if hitbox.colliderect(enemy_rect):
-            enemies.remove(enemy_rect)
+        return True, rects, surfs, xpos
+ 
+    # hitbox shrinker monkey
+    px = monkey_hitbox.x + 40
+    py = monkey_hitbox.y + 35
+    pw = monkey_hitbox.width - 80
+    ph = monkey_hitbox.height - 70
+ 
+    for i in range(len(rects)):
+        # hitbox shrinker rock
+        rx = rects[i].x + 25
+        ry = rects[i].y + 25
+        rw = rects[i].width - 50
+        rh = rects[i].height - 50
+ 
+        # collision checker
+        if px < rx + rw and px + pw > rx and py < ry + rh and py + ph > ry:
+            rects.pop(i)
+            surfs.pop(i)
+            xpos.pop(i)
             player_lives -= 1
-            
-            # Play player hit sound on impact
             player_hit.play()
-            
+ 
             if player_lives <= 0:
-                return False, enemies
+                return False, rects, surfs, xpos
             invincibility_timer = immortality_length
             player_visible = True
-            flash_counter = 0
-            return True, enemies
-    return True, enemies
-
-
+            monkey_flashing = 0
+            return True, rects, surfs, xpos
+ 
+    return True, rects, surfs, xpos
+ 
+ 
 def draw_menu():
-    menu_colour = "#314e71"
-    screen.blit(sky_sprite, (0, 0))
+    menu_colour = "#a6d8af"
+    screen.fill((0, 0, 0))
+    screen.blit(bg_sprite, (0, 0))
+    screen.blit(fg_sprite, (0, fg_y))
     screen.blit(ground_sprite, (0, ground_y))
-    title_surf = game_font.render("Fly to Survive", False, menu_colour)
-    title_rect = title_surf.get_rect(center=(400, 100))
-    controls_surf = game_font.render("Spacebar to start  |  Double jump", False, menu_colour)
-    controls_rect = controls_surf.get_rect(center=(400, 180))
-    high_score_surf = game_font.render(f"High Score: {high_score}", False, menu_colour)
-    high_score_rect = high_score_surf.get_rect(center=(400, 260))
-    screen.blit(title_surf, title_rect)
-    screen.blit(controls_surf, controls_rect)
-    screen.blit(high_score_surf, high_score_rect)
+    screen.blit(overlay_image, (0, 0))
+    title_text = game_font.render("Fly to Survive", False, menu_colour)
+    title_position = title_text.get_rect(center=(400, 100))
+    controls_text = game_font.render("Spacebar to start  |  Double jump", False, menu_colour)
+    controls_position = controls_text.get_rect(center=(400, 180))
+    highscore_text = game_font.render(f"High Score: {high_score}", False, menu_colour)
+    high_score_position = highscore_text.get_rect(center=(400, 260))
+    screen.blit(title_text, title_position)
+    screen.blit(controls_text, controls_position)
+    screen.blit(highscore_text, high_score_position)
     if score > 0:
-        game_over_surf = game_font.render(f"Final Score: {score}", False, menu_colour)
-        game_over_rect = game_over_surf.get_rect(center=(400, 320))
-        screen.blit(game_over_surf, game_over_rect)
-
-
+        endgame_text = game_font.render(f"Final Score: {score}", False, menu_colour)
+        final_score_position = endgame_text.get_rect(center=(400, 320))
+        screen.blit(endgame_text, final_score_position)
+ 
+ 
 # main game loop
-
+ 
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-
+ 
         if is_playing:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_p:
                 is_paused = not is_paused
                 if is_paused:
                     pause_start_time = pygame.time.get_ticks() // 100
                 else:
-                    paused_duration += (pygame.time.get_ticks() // 100) - pause_start_time
-
+                    pause_time += (pygame.time.get_ticks() // 100) - pause_start_time
+ 
             if not is_paused:
                 player_input(event)
-
+ 
                 if event.type == enemy_timer:
-                    enemy_list.append(
-                        missile_surf.get_rect(
-                            bottomleft=(random.randint(850, 1100), missile_mountains)
-                        )
-                    )
-                    # Play missile launch sound when a missile appears on the right side
-                    missile.play()
-
-                if event.type == animation_timer:
-                    animate_player()
-
-                if event.type == missile_animation_timer:
-                    animate_missile()
-
+                    rock_image = random.choice(rock_images)
+                    spawn_x = random.randint(850, 1100)
+                    rock_hitbox = rock_image.get_rect(bottomleft=(spawn_x, player_ground))
+                    enemy_rects.append(rock_hitbox)
+                    enemy_surfs.append(rock_image)
+                    enemy_xpos.append(float(spawn_x))
+ 
         else:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                 is_playing = True
                 is_paused = False
-
-                enemy_list.clear()
-                player_rect.bottomleft = (80, player_mountains)
-                players_gravity_speed = 0
+ 
+                enemy_rects.clear()
+                enemy_surfs.clear()
+                enemy_xpos.clear()
+                monkey_hitbox.bottomleft = (80, player_ground)
+                player_gravspeed = 0
                 jump_count = 0
-                tilt_angle = 0
-                target_tilt = 0
                 ground_x1 = 0
                 ground_x2 = ground_w
+                back_ground_x1 = 0
+                back_ground_x2 = ground_w
+                bg_x1 = 0
+                bg_x2 = bg_w
+                fg_x1 = 0
+                fg_x2 = fg_w
                 player_lives = 3
                 invincibility_timer = 0
                 player_visible = True
-                flash_counter = 0
-                paused_duration = 0
-
+                monkey_flashing = 0
+                pause_time = 0
+ 
                 start_time = pygame.time.get_ticks() // 100
-
+ 
     if is_playing:
-        screen.blit(sky_sprite, (0, 0))
-        score = display_score()
         enemy_speed = 5 + score // 50
-
+ 
         if not is_paused:
-            ground_x1 -= enemy_speed * groundspeed
-            ground_x2 -= enemy_speed * groundspeed
-            if ground_x1 <= -ground_w: ground_x1 = ground_w
-            if ground_x2 <= -ground_w: ground_x2 = ground_w
-            
-            apply_gravity()
-            update_tilt()
-
+            bg_x1, bg_x2 = scroll_pair(bg_x1, bg_x2, enemy_speed * bg_scroll_speed, bg_w)
+            fg_x1, fg_x2 = scroll_pair(fg_x1, fg_x2, enemy_speed * fg_scroll_speed, fg_w)
+ 
+        screen.fill((0, 0, 0))
+        screen.blit(bg_sprite, (bg_x1, 0))
+        screen.blit(bg_sprite, (bg_x2, 0))
+        screen.blit(fg_sprite, (fg_x1, fg_y))
+        screen.blit(fg_sprite, (fg_x2, fg_y))
+ 
+        score = display_score()
+ 
+        if not is_paused:
+            back_ground_x1, back_ground_x2 = scroll_pair(back_ground_x1, back_ground_x2, enemy_speed * back_groundspeed, ground_w)
+            ground_x1, ground_x2 = scroll_pair(ground_x1, ground_x2, enemy_speed * groundspeed, ground_w)
+ 
+            animate_player()
+            gravity()
+ 
+        screen.blit(ground_sprite, (back_ground_x1, ground_y))
+        screen.blit(ground_sprite, (back_ground_x2, ground_y))
         screen.blit(ground_sprite, (ground_x1, ground_y))
         screen.blit(ground_sprite, (ground_x2, ground_y))
-
-        rotated, rotated_rect = player_rotate()
-        
+ 
         if not is_paused and invincibility_timer > 0:
             invincibility_timer -= 1
-            flash_counter += 1
-            if flash_counter >= 6:
+            monkey_flashing += 1
+            if monkey_flashing >= 6:
                 player_visible = not player_visible
-                flash_counter = 0
+                monkey_flashing = 0
         elif not is_paused:
             player_visible = True
-
+ 
         if player_visible:
-            screen.blit(rotated, rotated_rect)
-
+            screen.blit(monkey_image, monkey_hitbox)
+ 
         draw_lives()
-
-        enemy_list = move_enemies(enemy_list, move=not is_paused)
-
+ 
+        enemy_rects, enemy_surfs, enemy_xpos = move_enemies(enemy_rects, enemy_surfs, enemy_xpos, enemy_speed, not is_paused)
+ 
         if not is_paused:
-            is_playing, enemy_list = collisions(rotated_rect, enemy_list)
+            is_playing, enemy_rects, enemy_surfs, enemy_xpos = collisions(monkey_hitbox, enemy_rects, enemy_surfs, enemy_xpos)
             if score > high_score:
                 high_score = score
         else:
-            pause_surf = game_font.render("GAME PAUSED", False, "#314e71")
-            pause_rect = pause_surf.get_rect(center=(400, 160))
-            resume_surf = game_font.render("Press 'P' to Resume", False, "#314e71")
-            resume_rect = resume_surf.get_rect(center=(400, 220))
-            screen.blit(pause_surf, pause_rect)
-            screen.blit(resume_surf, resume_rect)
-
+            screen.blit(overlay_image, (0, 0))
+            display_score()
+            pause_text = game_font.render("GAME PAUSED", False, "#a6d8af")
+            pause_position = pause_text.get_rect(center=(400, 160))
+            resume_text = game_font.render("Press 'P' to Resume", False, "#a6d8af")
+            resume_pos = resume_text.get_rect(center=(400, 220))
+            screen.blit(pause_text, pause_position)
+            screen.blit(resume_text, resume_pos)
+ 
     else:
         draw_menu()
-        
+ 
     pygame.display.update()
     clock.tick(60)
-
+ 
 with open("highscore.txt", "w") as file:
     file.write(str(high_score))
-
+ 
 pygame.quit()
 
 
+"""
+Changes:
+- Theme changed from jets dodging bullets ot monkey dodging rocks
+- textures changed
+- parallaxing of ground (two ground sprites layered for 3d effect)
+- background infinite scrolling
+- foreground folliage parallaxing
+- background extended for full frame
+- hit box changing by changing the x and y ccalues of the hit box for rock
+- linked rock height to monkey height
+- googled gif support for pygame, using gif-pygame for monkey animation
+- added darkening overlay in pause menu for readability
+- fixed ground, foreground, background scrolling gaps: scroll_pair() funcition remembers the previous position
+- rocks were out of sync from ground so linked them to the ground speed directly
 
-# add powerups (player can shoot missiles for a limited time)
+"""
+"""
+future additions:
+- add a jump cancel where if the monkey presses a button, the monkey accelerates to the ground and immediately jumps back up (double jump should not work after jump cancel. double jump should only work if monkey presses space bar.)
+- add power up (add vine that drops from the sky for the monkey to hold onto, granting invincibility)
+- add cllectibles (banana) for monkey to collect
+- add local high schore leaderboard with the text file
+- sounds broken gotta fix them
+"""
+
+
+""" notes of the extra added stuff:
+gif_pygame : xternal library
+pygame.mixer: sound
+pygame.USEREVENT: custom events
+"""
+
+
+'''observations/bugs
+- rock disappears after monkey hits it (keep this usefuk)
+- monkey coukd jump forever flying away (fixed by adding tiny cooldown)
+- rocks keep drifting away from the ground after a hit, or reaching the left wall (fixed by linking rocks to the ground speed)
+- menus were hard to see (fixed by adding a semi transparent black image overlay between the texts and everything else)
+- scire is visible sometimes (too annoying to fix, good enough)
+'''
