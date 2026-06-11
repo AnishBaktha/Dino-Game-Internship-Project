@@ -8,6 +8,7 @@ Commit hash: idk
  
 import pygame
 import random
+import math
 import gif_pygame
  
 pygame.init()
@@ -19,8 +20,20 @@ clock = pygame.time.Clock()
 running = True
  
 # sounds
-game_over = pygame.mixer.Sound("sfx/Game_Over.wav")
-player_hit = pygame.mixer.Sound("sfx/Player_Hit.wav")
+game_over = pygame.mixer.Sound("sfx/Dead.mp3")
+hit = pygame.mixer.Sound("sfx/Player_Hit.mp3")
+background = pygame.mixer.Sound("sfx/Background.mp3")
+music = pygame.mixer.Sound("sfx/Music_2.mp3")
+jump = pygame.mixer.Sound("sfx/Jump.mp3")
+water = pygame.mixer.Sound("sfx/Water.mp3")
+water.set_volume(2)
+background.set_volume(0.3)
+music.set_volume(1.2)
+hit.set_volume(3.0)
+jump.set_volume(0.5)
+background.play(loops=-1)
+music.play(loops=-1)
+water.play(loops=-1)
  
 # game state
 is_playing = False
@@ -30,6 +43,11 @@ jump_speed = -20
  
 monkey_vertical = -15
 player_ground = ground_y - monkey_vertical
+
+# monkey release
+monkay_release = False
+monkay_release_move_speed = 6
+monkay_release_centered = False
  
 # level images
 bg_sprite = pygame.transform.scale(pygame.image.load("graphics/level/Background.png").convert(), (800, 400))
@@ -40,12 +58,15 @@ overlay_image = pygame.image.load("graphics/level/Overlay.png").convert_alpha()
 game_font = pygame.font.SysFont("couriernew", 40, bold=True)
  
 # monkey images
-monkey_run_gif = gif_pygame.load("graphics/monkey/Monkey_run.gif")
-gif_pygame.transform.scale(monkey_run_gif, (100, 100))
+monkey_run = gif_pygame.load("graphics/monkey/Monkey_run.gif")
+monkey_still = gif_pygame.load("graphics/monkey/Monkey_still.gif")
+gif_pygame.transform.scale(monkey_still, (90, 90))
+gif_pygame.transform.scale(monkey_run, (100, 100))
 monkey_jump_image = pygame.image.load("graphics/monkey/Monkey_jump.png").convert_alpha()
-monkey_jump_image = pygame.transform.scale(monkey_jump_image, (100, 100))
-monkey_image = monkey_run_gif.get_surfaces()[0]
+monkey_jump_image = pygame.transform.scale(monkey_jump_image, (130, 130))
+monkey_image = monkey_run.get_surfaces()[0]
 monkey_hitbox = monkey_image.get_rect(bottomleft=(10, player_ground))
+
  
 # rock obstacle images
 rock_images = [
@@ -68,6 +89,12 @@ immortality_length = 90
 invincibility_timer = 0
 player_visible = True
 monkey_flashing = 0
+player_gravspeed = 0
+ 
+# Monkey flip
+flipping_speed = 0.1
+monkey_orient = 0
+flipping = 0.0
  
 # Ground scrolling
 ground_w = ground_sprite.get_width()
@@ -83,7 +110,7 @@ back_groundspeed = 0.4
 # Parallax layer scrolling
 bg_w = 800
 fg_w = fg_sprite.get_width()
-bg_scroll_speed = 0.05
+bg_scroll_speed = 0.2
 fg_scroll_speed = 0.35
 bg_x1 = 0
 bg_x2 = bg_w
@@ -96,7 +123,7 @@ enemy_surfs = []
 enemy_xpos = []
  
 enemy_speed = 5
-score = 0
+score = 1000
 high_score = 0
 start_time = 0
 pause_time = 0
@@ -144,21 +171,65 @@ def draw_lives():
         screen.blit(lives_surfs[3 - player_lives], (20, 30))
  
  
-def animate_player():
+def monkey_animate():
     global monkey_image
+    keys = pygame.key.get_pressed()
     if monkey_hitbox.bottom < player_ground:
         monkey_image = monkey_jump_image
+    elif monkay_release and monkay_release_centered and (keys[pygame.K_a] or keys[pygame.K_d]):
+        frames = monkey_run.get_surfaces()
+        frame_index = (pygame.time.get_ticks() // 150) % len(frames)
+        monkey_image = frames[frame_index]
+    elif monkay_release and monkay_release_centered:
+        frames = monkey_still.get_surfaces()
+        frame_index = (pygame.time.get_ticks() // 150) % len(frames)
+        monkey_image = frames[frame_index]
     else:
-        frames = monkey_run_gif.get_surfaces()
+        frames = monkey_run.get_surfaces()
         frame_index = (pygame.time.get_ticks() // 150) % len(frames)
         monkey_image = frames[frame_index]
  
+def flip(surface):
+    w, h = surface.get_size()
+    if flipping <= 0.5:
+        monkey_squish = 1.0 - (flipping / 0.5)
+    else:
+        monkey_squish = (flipping - 0.5) / 0.5
+    new_orientation = max(1, int(w * monkey_squish))
+    squishing = pygame.transform.scale(surface, (new_orientation, h))
+    if flipping > 0.5:
+        squishing = pygame.transform.flip(squishing, True, False)
+    return squishing, new_orientation
  
+ 
+def music_switch():
+    global music
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_1:
+        music.stop()
+        music = pygame.mixer.Sound("sfx/Music_1.mp3")
+        music.set_volume(1.2)
+        music.play(loops=-1)
+    elif event.type == pygame.KEYDOWN and event.key == pygame.K_2:
+        music.stop()
+        music = pygame.mixer.Sound("sfx/Music_2.mp3")
+        music.set_volume(1.2)
+        music.play(loops=-1)
+    elif event.type == pygame.KEYDOWN and event.key == pygame.K_3:
+        music.stop()
+        music = pygame.mixer.Sound("sfx/Music.mp3")
+        music.set_volume(1.2)
+        music.play(loops=-1)
+
 def player_input(event):
-    global player_gravspeed, jump_count
-    if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and jump_count < 2:
+    global player_gravspeed, jump_count, monkey_orient
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_d:
+        monkey_orient = 0
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_a:
+        monkey_orient = 1
+    if event.type == pygame.KEYDOWN and event.key == pygame.K_w and jump_count < 2:
         player_gravspeed = jump_speed
         jump_count += 1
+        jump.play()
  
  
 def gravity():
@@ -215,9 +286,10 @@ def collisions(monkey_hitbox, rects, surfs, xpos):
             surfs.pop(i)
             xpos.pop(i)
             player_lives -= 1
-            player_hit.play()
+            hit.play()
  
             if player_lives <= 0:
+                game_over.play()
                 return False, rects, surfs, xpos
             invincibility_timer = immortality_length
             player_visible = True
@@ -234,9 +306,9 @@ def draw_menu():
     screen.blit(fg_sprite, (0, fg_y))
     screen.blit(ground_sprite, (0, ground_y))
     screen.blit(overlay_image, (0, 0))
-    title_text = game_font.render("Fly to Survive", False, menu_colour)
+    title_text = game_font.render("Monkey Run", False, menu_colour)
     title_position = title_text.get_rect(center=(400, 100))
-    controls_text = game_font.render("Spacebar to start  |  Double jump", False, menu_colour)
+    controls_text = game_font.render("'W' to start", False, menu_colour)
     controls_position = controls_text.get_rect(center=(400, 180))
     highscore_text = game_font.render(f"High Score: {high_score}", False, menu_colour)
     high_score_position = highscore_text.get_rect(center=(400, 260))
@@ -253,10 +325,12 @@ def draw_menu():
  
 while running:
     for event in pygame.event.get():
+        music_switch()
         if event.type == pygame.QUIT:
             running = False
  
         if is_playing:
+            music_switch()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_p:
                 is_paused = not is_paused
                 if is_paused:
@@ -265,9 +339,16 @@ while running:
                     pause_time += (pygame.time.get_ticks() // 100) - pause_start_time
  
             if not is_paused:
-                player_input(event)
- 
-                if event.type == enemy_timer:
+                # in free roam, A/D move the monkey; jump still works
+                if monkay_release:
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_w and jump_count < 2:
+                        player_gravspeed = jump_speed
+                        jump_count += 1
+                        jump.play()
+                else:
+                    player_input(event)
+
+                if event.type == enemy_timer and not monkay_release:  # stop spawning in free roam
                     rock_image = random.choice(rock_images)
                     spawn_x = random.randint(850, 1100)
                     rock_hitbox = rock_image.get_rect(bottomleft=(spawn_x, player_ground))
@@ -276,9 +357,12 @@ while running:
                     enemy_xpos.append(float(spawn_x))
  
         else:
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+            music_switch()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_w:
                 is_playing = True
                 is_paused = False
+                monkay_release = False          # reset free roam on new game
+                monkay_release_centered = False
  
                 enemy_rects.clear()
                 enemy_surfs.clear()
@@ -299,15 +383,29 @@ while running:
                 player_visible = True
                 monkey_flashing = 0
                 pause_time = 0
+                monkey_orient = 0
+                flipping = 0.0
  
                 start_time = pygame.time.get_ticks() // 100
  
     if is_playing:
+        music_switch()
         enemy_speed = 5 + score // 50
+
+        # --- TRIGGER FREE ROAM at score 1000 ---
+        if score >= 1000 and not monkay_release:
+            monkay_release = True
+            monkay_release_centered = False  # start the slide-to-center animation
+            enemy_rects.clear()   # despawn all rocks
+            enemy_surfs.clear()
+            enemy_xpos.clear()
+        # ----------------------------------------
  
         if not is_paused:
-            bg_x1, bg_x2 = scroll_pair(bg_x1, bg_x2, enemy_speed * bg_scroll_speed, bg_w)
-            fg_x1, fg_x2 = scroll_pair(fg_x1, fg_x2, enemy_speed * fg_scroll_speed, fg_w)
+            if not monkay_release:
+                # normal scrolling
+                bg_x1, bg_x2 = scroll_pair(bg_x1, bg_x2, enemy_speed * bg_scroll_speed, bg_w)
+                fg_x1, fg_x2 = scroll_pair(fg_x1, fg_x2, enemy_speed * fg_scroll_speed, fg_w)
  
         screen.fill((0, 0, 0))
         screen.blit(bg_sprite, (bg_x1, 0))
@@ -318,10 +416,38 @@ while running:
         score = display_score()
  
         if not is_paused:
-            back_ground_x1, back_ground_x2 = scroll_pair(back_ground_x1, back_ground_x2, enemy_speed * back_groundspeed, ground_w)
-            ground_x1, ground_x2 = scroll_pair(ground_x1, ground_x2, enemy_speed * groundspeed, ground_w)
+            if not monkay_release:
+                # normal ground scrolling
+                back_ground_x1, back_ground_x2 = scroll_pair(back_ground_x1, back_ground_x2, enemy_speed * back_groundspeed, ground_w)
+                ground_x1, ground_x2 = scroll_pair(ground_x1, ground_x2, enemy_speed * groundspeed, ground_w)
+
+            # --- FREE ROAM: slide monkey to center then allow full A/D control ---
+            if monkay_release:
+                center_x = 400 - monkey_hitbox.width // 2
+                if not monkay_release_centered:
+                    # glide toward center
+                    if monkey_hitbox.x < center_x:
+                        monkey_hitbox.x = min(monkey_hitbox.x + monkay_release_move_speed, center_x)
+                    else:
+                        monkay_release_centered = True
+                else:
+                    # full A/D control anywhere on screen
+                    keys = pygame.key.get_pressed()
+                    if keys[pygame.K_d]:
+                        monkey_hitbox.x = min(monkey_hitbox.x + monkay_release_move_speed, 800 - monkey_hitbox.width)
+                        monkey_orient = 0
+                    if keys[pygame.K_a]:
+                        monkey_hitbox.x = max(monkey_hitbox.x - monkay_release_move_speed, 0)
+                        monkey_orient = 1
+            # -------------------------------------------------------------------------
+
+            target = float(monkey_orient)
+            if flipping < target:
+                flipping = min(target, flipping + flipping_speed)
+            elif flipping > target:
+                flipping = max(target, flipping - flipping_speed)
  
-            animate_player()
+            monkey_animate()
             gravity()
  
         screen.blit(ground_sprite, (back_ground_x1, ground_y))
@@ -339,14 +465,20 @@ while running:
             player_visible = True
  
         if player_visible:
-            screen.blit(monkey_image, monkey_hitbox)
+            flipped_surf, flipped_w = flip(monkey_image)
+            draw_x = monkey_hitbox.centerx - flipped_w // 2
+            screen.blit(flipped_surf, (draw_x, monkey_hitbox.y))
  
         draw_lives()
  
-        enemy_rects, enemy_surfs, enemy_xpos = move_enemies(enemy_rects, enemy_surfs, enemy_xpos, enemy_speed, not is_paused)
+        # rocks only move/render when not in free roam
+        enemy_rects, enemy_surfs, enemy_xpos = move_enemies(enemy_rects, enemy_surfs, enemy_xpos, enemy_speed, not is_paused and not monkay_release)
  
-        if not is_paused:
+        if not is_paused and not monkay_release:
             is_playing, enemy_rects, enemy_surfs, enemy_xpos = collisions(monkey_hitbox, enemy_rects, enemy_surfs, enemy_xpos)
+            if score > high_score:
+                high_score = score
+        elif not is_paused and monkay_release:
             if score > high_score:
                 high_score = score
         else:
@@ -385,6 +517,13 @@ Changes:
 - added darkening overlay in pause menu for readability
 - fixed ground, foreground, background scrolling gaps: scroll_pair() funcition remembers the previous position
 - rocks were out of sync from ground so linked them to the ground speed directly
+- fixed music, added music switcher (keys 1, 2, 3)
+- after 1000 score, monkey moved to center and is released so player can control with WASD controls
+- jump key moved from space bar to w for future additions 
+- monkey flips when moving left an right for better looking game (done by squishing until the image inverts)
+- added monkey still animation for when the player doesnt move (only triggers after 1000 points for free roam)
+- changed monkey sprite image sizes so theyre more consistent
+********set core variable to 1000 to test free roam******
 
 """
 """
@@ -393,7 +532,9 @@ future additions:
 - add power up (add vine that drops from the sky for the monkey to hold onto, granting invincibility)
 - add cllectibles (banana) for monkey to collect
 - add local high schore leaderboard with the text file
-- sounds broken gotta fix them
+- falling stuff (maybe coconuts that fall from sky and randmly a banana for player to catch )
+- make a banana counter on bottom to count bananas collected
+- extra life fall from sky (rare)
 """
 
 
@@ -409,5 +550,6 @@ pygame.USEREVENT: custom events
 - monkey coukd jump forever flying away (fixed by adding tiny cooldown)
 - rocks keep drifting away from the ground after a hit, or reaching the left wall (fixed by linking rocks to the ground speed)
 - menus were hard to see (fixed by adding a semi transparent black image overlay between the texts and everything else)
-- scire is visible sometimes (too annoying to fix, good enough)
+- scire is hard to read sometimes (too annoying to fix, good enough)
+- music fixed, during testing wanted to try different musics but they switcher worked well (new feature keep music swithcer, keys 1, 2, 3)
 '''
